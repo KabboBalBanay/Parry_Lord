@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Parry Lord</title>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;touch-action:none;user-select:none;-webkit-user-select:none}
+html,body{margin:0;height:100%;background:#1d2a2f;color:#e8ecdf;font-family:'Shippori Mincho B1',Georgia,serif;overflow:hidden}
+#menu{position:fixed;inset:0;z-index:5;background:#1d2a2f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center}
+h1{font-size:clamp(44px,11vw,96px);margin:0;font-weight:800;letter-spacing:.03em;line-height:1}
+p{margin:0;max-width:34em;opacity:.8;line-height:1.5}
+.row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+button,input{font:inherit;font-size:18px;padding:10px 22px;border:2px solid #e8ecdf;background:transparent;color:#e8ecdf;border-radius:2px}
+button{cursor:pointer}button:active{background:#e8ecdf;color:#1d2a2f}
+input{text-transform:uppercase;width:130px;text-align:center;touch-action:auto;user-select:text;-webkit-user-select:text}
+#status{min-height:1.5em;color:#f2c14e}
+#c{display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%)}
+#tc{display:none}
+#joy{position:fixed;left:0;top:0;width:55%;height:100%;z-index:3}
+#ring{position:fixed;width:110px;height:110px;border:2px solid rgba(232,236,223,.5);border-radius:50%;display:none;z-index:3;pointer-events:none}
+#ring i{position:absolute;width:44px;height:44px;border-radius:50%;background:rgba(232,236,223,.6);left:31px;top:31px}
+.tb{position:fixed;bottom:34px;width:88px;height:88px;border-radius:50%;z-index:4;padding:0;font-size:16px;background:rgba(29,42,47,.55);border-width:3px}
+#bA{right:30px}#bP{right:132px}
+@media (orientation:portrait){#rot{display:block}}
+#rot{display:none;position:fixed;top:6px;left:0;right:0;text-align:center;font-size:14px;opacity:.7;z-index:6;pointer-events:none}
+</style></head><body>
+<div id="menu">
+ <h1>Parry Lord</h1>
+ <p>One duel, two swords. Tap parry just before a blow lands to deflect it and rattle your rival's posture. Break their posture or drain their health. First to 4 rounds wins the match.</p>
+ <div class="row"><button id="hostBtn">Host a room</button></div>
+ <div class="row"><input id="code" maxlength="4" placeholder="Code" autocomplete="off"><button id="joinBtn">Join</button></div>
+ <div id="status"></div>
+ <p style="font-size:14px">Keyboard: move with WASD or arrows, attack with J or left click, parry with K, Space or right click (tap to deflect, hold to guard). Touch: left side to move, buttons on the right.</p>
+</div>
+<canvas id="c" width="800" height="480"></canvas>
+<div id="tc"><div id="joy"></div><div id="ring"><i></i></div><button class="tb" id="bP">Parry</button><button class="tb" id="bA">Attack</button></div>
+<div id="rot">Rotate your phone sideways for a bigger arena</div>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const $=id=>document.getElementById(id),cv=$('c'),x=cv.getContext('2d');
+const W=800,H=480,AY=52,R=16,WIN=4,NAMES=['Vermilion','Indigo'],COL=['#c8402b','#2f5fb3'];
+let role=null,conn=null,peer=null,me=0,S=null,G=null,fx=[],shake=0,outEv=[],last=0,fc=0;
+const L={mx:0,my:0,ph:false,ap:false,pp:false},I2={mx:0,my:0,ph:false,ap:false,pp:false};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const status=t=>$('status').textContent=t;
+
+/* ---------- game simulation (runs on the host only) ---------- */
+const mk=(px,i)=>({x:px,y:(AY+H)/2,a:i?Math.PI:0,s:'idle',t:0,hp:100,po:0,pd:0,gcd:0});
+function newRound(){G.P=[mk(170,0),mk(W-170,1)];G.ph='ready';G.pt=1.6}
+function newMatch(){G={sc:[0,0],ev:[],win:-1};newRound()}
+const ev=(k,px,py)=>G.ev.push([k,px|0,py|0]);
+function chk(q){if(q.po>=100&&q.s!=='stun'){q.po=100;q.s='stun';q.t=1.7;ev('break',q.x,q.y)}}
+function strike(i){
+  const p=G.P[i],o=G.P[1-i];
+  if(Math.hypot(o.x-p.x,o.y-p.y)>70)return;
+  const mx=(p.x+o.x)/2,my=(p.y+o.y)/2,kx=Math.cos(p.a),ky=Math.sin(p.a);
+  if(o.s==='guard'){
+    if(o.t<.2){ev('parry',mx,my);p.po+=28;p.pd=0;p.s='rec';p.t=.5;p.x-=kx*22;p.y-=ky*22;chk(p)}
+    else{ev('block',mx,my);o.po+=14;o.pd=0;o.x+=kx*14;o.y+=ky*14;chk(o)}
+    return;
+  }
+  o.hp=Math.max(0,o.hp-(o.s==='stun'?30:14));
+  if(o.s!=='stun'){o.po+=12;o.pd=0}
+  if(o.s==='wind'){o.s='rec';o.t=.3}
+  o.x+=kx*18;o.y+=ky*18;
+  ev('hit',mx,my);chk(o);
+  if(o.hp<=0){G.sc[i]++;G.ph='ko';G.pt=2.4;if(G.sc[i]>=WIN)G.win=i}
+}
+function step(dt){
+  if(G.ph!=='play'){
+    G.pt-=dt;
+    if(G.pt<=0){
+      if(G.ph==='ready')G.ph='play';
+      else if(G.ph==='ko'){if(G.win>=0){G.ph='over';G.pt=6}else newRound()}
+      else newMatch();
+    }
+    L.ap=L.pp=I2.ap=I2.pp=false;return;
+  }
+  const P=G.P;
+  [L,I2].forEach((inp,i)=>{
+    const p=P[i],o=P[1-i];
+    p.a=Math.atan2(o.y-p.y,o.x-p.x);
+    p.pd+=dt;p.gcd=Math.max(0,p.gcd-dt);
+    if(p.pd>1.1&&p.s!=='stun')p.po=Math.max(0,p.po-(p.s==='guard'?30:18)*dt);
+    let sp=0;
+    if(p.s==='idle'){sp=170;if(inp.ap){p.s='wind';p.t=.14}else if(inp.pp&&p.gcd<=0){p.s='guard';p.t=0}}
+    else if(p.s==='guard'){sp=70;p.t+=dt;if(!inp.ph&&p.t>.2){p.s='idle';p.gcd=.25}}
+    else if(p.s==='wind'){sp=60;p.t-=dt;if(p.t<=0){strike(i);if(p.s==='wind'){p.s='swing';p.t=.1}}}
+    else if(p.s==='swing'){sp=40;p.t-=dt;if(p.t<=0){p.s='rec';p.t=.3}}
+    else if(p.s==='rec'){sp=60;p.t-=dt;if(p.t<=0)p.s='idle'}
+    else if(p.s==='stun'){p.t-=dt;if(p.t<=0){p.s='idle';p.po=35}}
+    inp.ap=inp.pp=false;
+    const k=Math.min(1,Math.hypot(inp.mx,inp.my)),m=Math.hypot(inp.mx,inp.my)||1;
+    p.x+=inp.mx/m*k*sp*dt;p.y+=inp.my/m*k*sp*dt;
+  });
+  P.forEach(p=>{p.x=clamp(p.x,R+14,W-R-14);p.y=clamp(p.y,AY+R+6,H-R-14)});
+  const dx=P[1].x-P[0].x,dy=P[1].y-P[0].y,d=Math.hypot(dx,dy)||1;
+  if(d<2*R){const f=(2*R-d)/2;P[0].x-=dx/d*f;P[0].y-=dy/d*f;P[1].x+=dx/d*f;P[1].y+=dy/d*f}
+}
+const snap=()=>{const d={P:G.P.map(p=>({x:p.x|0,y:p.y|0,a:+p.a.toFixed(2),s:p.s,t:+p.t.toFixed(2),hp:p.hp,po:p.po|0})),sc:G.sc,ph:G.ph,win:G.win,ev:outEv};outEv=[];return d};
+
+/* ---------- rendering ---------- */
+function addFx(e){fx.push({k:e[0],x:e[1],y:e[2],t:0});shake=Math.max(shake,{parry:6,break:10,hit:4,block:2}[e[0]])}
+function blade(p,ang,len,col){
+  const c=Math.cos(ang),s=Math.sin(ang);
+  x.lineCap='round';
+  x.strokeStyle='#14181a';x.lineWidth=7;x.beginPath();x.moveTo(p.x+c*(R-4),p.y+s*(R-4));x.lineTo(p.x+c*(R+len),p.y+s*(R+len));x.stroke();
+  x.strokeStyle=col;x.lineWidth=3.5;x.stroke();
+}
+function draw(s,dt){
+  x.save();
+  if(shake>0){x.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);shake=Math.max(0,shake-dt*30)}
+  x.fillStyle='#1d2a2f';x.fillRect(-20,-20,W+40,H+40);
+  x.fillStyle='#b7c2b0';x.fillRect(8,AY,W-16,H-AY-8);
+  x.strokeStyle='rgba(29,42,47,.2)';x.lineWidth=2;
+  for(let i=1;i<8;i++){const gx=8+i*(W-16)/8;x.beginPath();x.moveTo(gx,AY);x.lineTo(gx,H-8);x.stroke()}
+  for(let i=1;i<4;i++){const gy=AY+i*(H-AY-8)/4;x.beginPath();x.moveTo(8,gy);x.lineTo(W-8,gy);x.stroke()}
+  x.strokeStyle='#e8ecdf';x.lineWidth=3;x.strokeRect(8,AY,W-16,H-AY-8);
+  const now=performance.now()/1000;
+  s.P.forEach((p,i)=>{
+    x.fillStyle='rgba(0,0,0,.18)';x.beginPath();x.arc(p.x+3,p.y+4,R,0,7);x.fill();
+    if(p.s==='swing'){x.fillStyle='rgba(255,255,255,.4)';x.beginPath();x.moveTo(p.x,p.y);x.arc(p.x,p.y,R+42,p.a-1.1,p.a+1.1);x.fill()}
+    if(p.s==='guard'){const gc=Math.cos(p.a),gs=Math.sin(p.a),pc=-gs,ps=gc,d=p.t<.2;
+      x.strokeStyle='#14181a';x.lineWidth=8;x.lineCap='round';x.beginPath();x.moveTo(p.x+gc*26+pc*22,p.y+gs*26+ps*22);x.lineTo(p.x+gc*26-pc*22,p.y+gs*26-ps*22);x.stroke();
+      x.strokeStyle=d?'#f2c14e':'#e8ecdf';x.lineWidth=4;x.stroke()}
+    else{
+      const a=p.a;
+      if(p.s==='wind')blade(p,a-1.6,40,'#f4f4ee');
+      else if(p.s==='swing')blade(p,a-1.1+2.2*(1-p.t/.1),44,'#fff');
+      else if(p.s==='rec')blade(p,a+1.1,40,'#f4f4ee');
+      else if(p.s==='stun')blade(p,a+2.6,26,'#9aa');
+      else blade(p,a+.7,40,'#f4f4ee');
+    }
+    x.fillStyle=p.s==='stun'&&Math.floor(now*10)%2?'#fff':COL[i];
+    x.beginPath();x.arc(p.x,p.y,R,0,7);x.fill();x.lineWidth=3;x.strokeStyle='#14181a';x.stroke();
+    if(p.s==='stun'){x.fillStyle='#f2c14e';for(let k=0;k<3;k++){const a=now*5+k*2.1;x.beginPath();x.arc(p.x+Math.cos(a)*22,p.y-24+Math.sin(a)*5,3,0,7);x.fill()}}
+    x.fillStyle='#14181a';x.beginPath();x.arc(p.x+Math.cos(p.a)*7,p.y+Math.sin(p.a)*7,3.5,0,7);x.fill();
+  });
+  fx.forEach(f=>{
+    f.t+=dt;const u=Math.min(1,f.t/.4),big=f.k==='parry'||f.k==='break',n=big?12:6,r0=8+u*(big?46:24);
+    x.strokeStyle={parry:'#f2c14e',block:'#e8ecdf',hit:'#c8402b',break:'#fff'}[f.k];x.lineWidth=4*(1-u)+1;x.globalAlpha=1-u;
+    for(let i=0;i<n;i++){const a=i/n*6.283+f.x;x.beginPath();x.moveTo(f.x+Math.cos(a)*r0*.5,f.y+Math.sin(a)*r0*.5);x.lineTo(f.x+Math.cos(a)*r0,f.y+Math.sin(a)*r0);x.stroke()}
+    if(big){x.fillStyle=x.strokeStyle;x.font="800 18px 'Shippori Mincho B1',Georgia,serif";x.textAlign='center';x.fillText(f.k==='parry'?'Deflect':'Posture broken',f.x,f.y-26-u*14)}
+    x.globalAlpha=1;
+  });
+  fx=fx.filter(f=>f.t<.4);
+  /* HUD */
+  x.fillStyle='#14181a';x.fillRect(0,0,W,AY);
+  s.P.forEach((p,i)=>{
+    const bx=i?W-16-300:16,fill=(y,h,v,c)=>{const w=300*v/100;x.fillStyle='#0b0f10';x.fillRect(bx,y,300,h);x.fillStyle=c;x.fillRect(i?bx+300-w:bx,y,w,h)};
+    fill(8,13,p.hp,COL[i]);
+    fill(25,8,p.po,p.po>=100&&Math.floor(now*8)%2?'#fff':'#f2c14e');
+    for(let k=0;k<WIN;k++){x.beginPath();x.arc(bx+(i?300-6-k*17:6+k*17),43,5,0,7);x.fillStyle=k<s.sc[i]?'#f2c14e':'#2b3a40';x.fill()}
+    x.fillStyle='#e8ecdf';x.font="600 14px 'Shippori Mincho B1',Georgia,serif";x.textAlign=i?'left':'right';
+    x.fillText((i===me?'You, ':'')+NAMES[i],i?bx:bx+300,47);
+  });
+  x.fillStyle='#e8ecdf';x.font="800 16px 'Shippori Mincho B1',Georgia,serif";x.textAlign='center';x.fillText('Round '+Math.min(7,s.sc[0]+s.sc[1]+1),W/2,30);
+  /* banner */
+  let msg='';
+  if(s.ph==='ready')msg='Round '+(s.sc[0]+s.sc[1]+1);
+  else if(s.ph==='ko'){const w=s.P[0].hp>0?0:1;msg=(w===me?'Point to you':'Point to '+NAMES[w])}
+  else if(s.ph==='over')msg=(s.win===me?'Victory':'Defeat')+'. '+NAMES[s.win]+' takes the match.';
+  if(msg){x.font="800 44px 'Shippori Mincho B1',Georgia,serif";x.textAlign='center';x.lineWidth=7;x.strokeStyle='#14181a';x.strokeText(msg,W/2,(AY+H)/2-60);x.fillStyle='#fff';x.fillText(msg,W/2,(AY+H)/2-60)}
+  x.restore();
+}
+
+/* ---------- input ---------- */
+const K={};let PM=false,PT=false;
+addEventListener('keydown',e=>{
+  if(!role||e.repeat)return;K[e.code]=1;
+  if(['KeyJ','KeyZ','Enter'].includes(e.code))L.ap=true;
+  if(['KeyK','KeyX','Space','ShiftLeft'].includes(e.code))L.pp=true;
+  if(e.code==='Space')e.preventDefault();
+});
+addEventListener('keyup',e=>K[e.code]=0);
+addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('pointerdown',e=>{if(e.pointerType!=='mouse')return;if(e.button===0)L.ap=true;if(e.button===2){PM=true;L.pp=true}});
+addEventListener('pointerup',e=>{if(e.button===2)PM=false});
+const J={x:0,y:0,id:null,ox:0,oy:0},joy=$('joy'),ring=$('ring'),knob=ring.firstChild;
+joy.onpointerdown=e=>{J.id=e.pointerId;J.ox=e.clientX;J.oy=e.clientY;joy.setPointerCapture(e.pointerId);ring.style.display='block';ring.style.left=e.clientX-55+'px';ring.style.top=e.clientY-55+'px'};
+joy.onpointermove=e=>{if(e.pointerId!==J.id)return;const dx=e.clientX-J.ox,dy=e.clientY-J.oy,d=Math.hypot(dx,dy),m=Math.min(d,50)/50;J.x=d>8?dx/d*m:0;J.y=d>8?dy/d*m:0;knob.style.transform=`translate(${J.x*40}px,${J.y*40}px)`};
+joy.onpointerup=joy.onpointercancel=()=>{J.id=null;J.x=J.y=0;ring.style.display='none';knob.style.transform=''};
+$('bA').onpointerdown=()=>{L.ap=true};
+$('bP').onpointerdown=()=>{PT=true;L.pp=true};
+$('bP').onpointerup=$('bP').onpointercancel=$('bP').onpointerleave=()=>{PT=false};
+function poll(){
+  const kx=(K.KeyD||K.ArrowRight?1:0)-(K.KeyA||K.ArrowLeft?1:0),ky=(K.KeyS||K.ArrowDown?1:0)-(K.KeyW||K.ArrowUp?1:0);
+  L.mx=J.x||kx;L.my=J.y||ky;
+  L.ph=!!(K.KeyK||K.KeyX||K.Space||K.ShiftLeft||PM||PT);
+}
+
+/* ---------- networking (PeerJS public broker, no game server) ---------- */
+const fit=()=>{const s=Math.min(innerWidth/W,innerHeight/H);cv.style.width=W*s+'px';cv.style.height=H*s+'px'};
+addEventListener('resize',fit);
+function enter(r){
+  role=r;me=r==='host'?0:1;S=null;
+  $('menu').style.display='none';cv.style.display='block';fit();
+  if(matchMedia('(pointer:coarse)').matches)$('tc').style.display='block';
+}
+function leave(msg){
+  role=null;conn=null;if(peer){peer.destroy();peer=null}
+  cv.style.display='none';$('tc').style.display='none';$('menu').style.display='flex';status(msg||'');
+}
+function hostRoom(){
+  if(typeof Peer==='undefined')return status('Could not load PeerJS. Check your connection.');
+  const A='ABCDEFGHJKLMNPQRSTUVWXYZ',code=Array.from({length:4},()=>A[Math.random()*A.length|0]).join('');
+  if(peer)peer.destroy();
+  peer=new Peer('parrylord-'+code);
+  peer.on('open',()=>{
+    status('Room '+code+'. Waiting for your rival...');
+    try{navigator.clipboard.writeText(location.href.split('#')[0]+'#'+code)}catch(_){}
+  });
+  peer.on('error',e=>{if(e.type==='unavailable-id')hostRoom();else status('Error: '+e.type)});
+  peer.on('connection',c=>{
+    if(conn){c.close();return}
+    conn=c;
+    c.on('open',()=>{newMatch();outEv=[];enter('host')});
+    c.on('data',d=>{I2.mx=d.mx;I2.my=d.my;I2.ph=d.ph;I2.ap=I2.ap||d.ap;I2.pp=I2.pp||d.pp});
+    c.on('close',()=>leave('Your rival left the room.'));
+  });
+}
+function joinRoom(){
+  const code=$('code').value.trim().toUpperCase();
+  if(code.length<4)return status('Enter the 4-letter room code.');
+  if(typeof Peer==='undefined')return status('Could not load PeerJS. Check your connection.');
+  status('Connecting...');
+  if(peer)peer.destroy();
+  peer=new Peer();
+  peer.on('open',()=>{
+    conn=peer.connect('parrylord-'+code,{reliable:true});
+    conn.on('open',()=>enter('guest'));
+    conn.on('data',d=>{S=d;d.ev.forEach(addFx)});
+    conn.on('close',()=>leave('The host left the room.'));
+  });
+  peer.on('error',e=>status(e.type==='peer-unavailable'?'No room with that code.':'Error: '+e.type));
+}
+$('hostBtn').onclick=hostRoom;$('joinBtn').onclick=joinRoom;
+if(location.hash.length>1)$('code').value=location.hash.slice(1,5);
+
+/* ---------- main loop ---------- */
+function loop(ts){
+  requestAnimationFrame(loop);
+  const dt=Math.min(.05,(ts-last)/1000||0);last=ts;
+  if(!role)return;
+  poll();fc++;
+  if(role==='host'){
+    step(dt);
+    G.ev.forEach(addFx);outEv.push(...G.ev);G.ev=[];
+    if(fc%2===0&&conn&&conn.open)conn.send(snap());
+    draw(G,dt);
+  }else{
+    if(fc%2===0&&conn&&conn.open){conn.send({mx:L.mx,my:L.my,ph:L.ph,ap:L.ap,pp:L.pp});L.ap=L.pp=false}
+    if(S)draw(S,dt);
+  }
+}
+requestAnimationFrame(loop);
+</script>
+</body></html>
